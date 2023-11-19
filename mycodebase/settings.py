@@ -27,7 +27,7 @@ SECRET_KEY = 'django-insecure-jfgb!k^qkpnnav-0*0w71&y283l*r-^&6$%&0-nk*y$en5d_12
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["3.90.242.65"]
+ALLOWED_HOSTS = ["3.90.242.65","127.0.0.1"]
 
 
 # Application definition
@@ -138,3 +138,6 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ]
 }
+
+
+OPEN_AI_MAX_TOKEN=800

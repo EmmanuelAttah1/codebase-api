@@ -12,16 +12,20 @@ from langchain.prompts.chat import (
 )
 
 from .models import FileChunk, ProjectFile
-from .prompt import main_prompt, user_prompt
+from .prompt import main_prompt, user_prompt,prompt
+
+import tiktoken
 
 
 _ = load_dotenv(find_dotenv()) 
-llm_name = "gpt-3.5-turbo"
+llm_name = "gpt-4" #"gpt-3.5-turbo"
+
+encoding_name = "cl100k_base"
 
 human_template = "{text}"
 llm = ChatOpenAI(model_name=llm_name, temperature=0)
 user_prompt_template = PromptTemplate.from_template(user_prompt)
-system_message_prompt = SystemMessagePromptTemplate.from_template(main_prompt)
+system_message_prompt = SystemMessagePromptTemplate.from_template(prompt)
 human_message_prompt = HumanMessagePromptTemplate.from_template(human_template)  
 chat_prompt = ChatPromptTemplate.from_messages([system_message_prompt, human_message_prompt])
 
@@ -32,9 +36,16 @@ chain = LLMChain(
 )
 
 
-def formatUserQuery(chunk,dependency):
+def count_token(string: str) -> int:
+    """Returns the number of tokens in a text string."""
+    encoding = tiktoken.get_encoding(encoding_name)
+    num_tokens = len(encoding.encode(string))
+    return num_tokens
 
-    query = user_prompt_template.format(dependencies=str(dependency),chunk=chunk)
+
+def formatUserQuery(chunk,name,dependency):
+    #dependencies=str(dependency),
+    query = user_prompt_template.format(chunk=chunk,chunk_name=name)
 
     return query
 
@@ -64,16 +75,17 @@ def getChunkDependency(dependencies_names,file,isHead):
     return data
 
 
-def generate_doc(chunk,dependency,context):
-
-    all_context = f"{context}\n{dependency}"
-
-    query = formatUserQuery(chunk,all_context)
-
-    # print("our query  ", query)
-    
-    response = chain.run(query)
-
-    # print("my response ",response)
+async def generate_doc(info):    
+    response = await chain.arun(info)
 
     return response
+
+
+def process_chunk(chunk,dependency,context,name):
+    all_context = f"{context}\n{dependency}"
+    chunk_info = formatUserQuery(chunk,name,all_context)
+
+    return chunk_info
+
+
+prompt_count = count_token(prompt)

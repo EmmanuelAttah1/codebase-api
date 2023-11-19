@@ -3,7 +3,7 @@ from django.db.models import Q
 from rest_framework.response import Response
 from rest_framework.decorators import api_view
 
-from .utils import getChunkDependency,generate_doc
+from .utils import generate_doc
 from .models import Project,FileChunk,ProjectFile
 from .serializer import ChunkSeializer, UserLoginSerializer
 
@@ -11,6 +11,17 @@ from rest_framework.views import APIView
 from rest_framework.authtoken.models import Token
 from rest_framework import status
 from rest_framework import permissions
+
+import asyncio
+import aiohttp
+import json
+from rest_framework.views import APIView
+from rest_framework.response import Response
+
+from .utils import process_chunk, count_token
+
+from mycodebase.settings import OPEN_AI_MAX_TOKEN
+
 
 # Create your views here.
 
@@ -42,59 +53,107 @@ def createNewProject(request):
 
     return Response({'msg':"done"})
 
-@api_view(['POST'])
-def generateChunkDoc(request):
-    data = request.POST
 
-    # print(data)
+class GenerateChunkDoc(APIView):
 
-    chunk = data['chunk']
-    file_name = data['file']
-    chunkName = data['name']
-    dependencies = data['dependencies']
-    chunk_range = data['range']
-    project = data['project']
-    context = data['docContext']
+    async def process_chunks(self, chunks):
+        async with aiohttp.ClientSession() as session:
+            tasks = []
+            section = ""
+            section_count = 0
 
-    #get project file
-    # print("my project is ",project)
+            for code_chunk in chunks:
+                chunk = code_chunk['chunk']
+                chunk_dependency = code_chunk['chunk_dependency']
+                context = code_chunk['context']
+                name = code_chunk['name']
 
-    # try:
-    project  = Project.objects.get(name=project)
+                chunk_text = process_chunk(chunk,chunk_dependency,context,name)
+                chunk_count = count_token(chunk_text)
 
-    # except Project.DoesNotExist:
-    #     project = Project(name=project)
-    #     project.save()
+                if chunk_count + section_count > OPEN_AI_MAX_TOKEN:
 
-    chunk_dependency = ""
+                    #process chunk
+                    task = asyncio.ensure_future(generate_doc(section))
+                    tasks.append(task)
 
-    if len(dependencies) != 0:
-        chunk_dependency = getChunkDependency(dependencies,file_name,chunkName=="head")
+                    section = ""
+                    section_count = 0
 
-    doc = generate_doc(chunk, chunk_dependency,context)
+                section += chunk_text
+                section_count += chunk_count
 
-    try:
-        file = ProjectFile.objects.get(Q(name=file_name)&Q(project=project))
+            if len(section) > 0:
+                task = asyncio.ensure_future(generate_doc(section))
+                tasks.append(task)
 
-    except ProjectFile.DoesNotExist:
-        file = ProjectFile()
-        file.name = file_name
-        file.project = project
-        file.save()
+            # Gather all tasks to wait for their completion
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    # save doc
-    try:
-        doc_chunk = FileChunk.objects.get(
-            Q(file=file)&Q(chunk=chunk)
-        )
-    except FileChunk.DoesNotExist:
-        doc_chunk = FileChunk(file=file,chunk=chunk,name=chunkName,chunk_range=chunk_range)
-
-    doc_chunk.doc = doc
-    doc_chunk.save()
+            return results
 
 
-    return Response({"status":"done"})
+    def post(self,request,*args,**kwargs):
+        chunk_info = {}
+
+        # try:
+        data = request.POST
+
+        code_chunks = data['chunks']
+        project = data['project']
+        file_name = data['file']
+
+        code_chunks = json.loads(code_chunks)
+
+        for chunk in code_chunks:
+            chunk_info[chunk['name']] = chunk
+
+
+        project  = Project.objects.get(name=project)
+
+        try:
+            file = ProjectFile.objects.get(Q(name=file_name)&Q(project=project))
+
+        except ProjectFile.DoesNotExist:
+            file = ProjectFile()
+            file.name = file_name
+            file.project = project
+            file.save()
+
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        results = loop.run_until_complete(self.process_chunks(code_chunks))
+        loop.close()
+
+
+        for section in results:
+            section = json.loads(section)
+            for chunkData in section:
+                name = chunkData['chunk_name']
+                doc = chunkData['chunk_doc']
+
+                chunk = chunk_info[name]['chunk']
+                chunk_range = chunk_info[name]['range']
+
+                # save doc
+                try:
+                    doc_chunk = FileChunk.objects.get(
+                        Q(file=file)&Q(chunk=chunk)
+                    )
+                except FileChunk.DoesNotExist:
+                    doc_chunk = FileChunk(file=file,chunk=chunk,name=name,chunk_range=chunk_range)
+
+                doc_chunk.doc = doc
+                doc_chunk.save()
+
+
+        return Response({"status":"done"})
+        
+        # except Exception as e:
+        #     # Handle exceptions accordingly
+        #     return Response({'error': str(e)}, status=500)
+        
 
 @api_view(['GET'])
 def getFileDoc(request,file_name,project_name):
