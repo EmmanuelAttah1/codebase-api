@@ -95,6 +95,7 @@ class GenerateChunkDoc(APIView):
 
     def post(self,request,*args,**kwargs):
         chunk_info = {}
+        count = 1
 
         # try:
         data = request.POST
@@ -106,7 +107,17 @@ class GenerateChunkDoc(APIView):
         code_chunks = json.loads(code_chunks)
 
         for chunk in code_chunks:
-            chunk_info[chunk['name']] = chunk
+            name = chunk['name']
+
+            if len(name) == 0:
+                name = f"function_{count}"
+                count += 1
+                indexO = code_chunks.index(chunk)
+                code_chunks[indexO]['name'] = name
+
+            chunk_info[name] = chunk
+
+        # print("code chunk = ", code_chunks)
 
 
         project  = Project.objects.get(name=project)
@@ -126,6 +137,7 @@ class GenerateChunkDoc(APIView):
         results = loop.run_until_complete(self.process_chunks(code_chunks))
         loop.close()
 
+        # results = []
 
         for section in results:
             section = json.loads(section)
